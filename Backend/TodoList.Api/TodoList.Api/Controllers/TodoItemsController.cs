@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using TodoList.Api.Services;
 
 namespace TodoList.Api.Controllers
 {
@@ -11,12 +12,12 @@ namespace TodoList.Api.Controllers
     [ApiController]
     public class TodoItemsController : ControllerBase
     {
-        private readonly TodoContext _context;
+        private readonly ITodoItemsService _todoItemsService;
         private readonly ILogger<TodoItemsController> _logger;
 
-        public TodoItemsController(TodoContext context, ILogger<TodoItemsController> logger)
+        public TodoItemsController(ITodoItemsService todoItemsService, ILogger<TodoItemsController> logger)
         {
-            _context = context;
+            _todoItemsService = todoItemsService;
             _logger = logger;
         }
 
@@ -24,7 +25,7 @@ namespace TodoList.Api.Controllers
         [HttpGet]
         public async Task<IActionResult> GetTodoItems()
         {
-            var results = await _context.TodoItems.Where(x => !x.IsCompleted).ToListAsync();
+            var results = await _todoItemsService.GetTodoItemsAsync(false);
             return Ok(results);
         }
 
@@ -32,14 +33,16 @@ namespace TodoList.Api.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetTodoItem(Guid id)
         {
-            var result = await _context.TodoItems.FindAsync(id);
-
-            if (result == null)
+            try
             {
-                return NotFound();
+                var result = await _todoItemsService.GetTodoItemAsync(id);
+                return Ok(result);
+            }catch (ArgumentException ex)
+            {
+                _logger.LogError(ex, null);
+                return  NotFound();
             }
-
-            return Ok(result);
+            
         }
 
         // PUT: api/TodoItems/... 
@@ -49,57 +52,36 @@ namespace TodoList.Api.Controllers
             if (id != todoItem.Id)
             {
                 return BadRequest();
-            }
-
-            _context.Entry(todoItem).State = EntityState.Modified;
+            }           
 
             try
             {
-                await _context.SaveChangesAsync();
+                await _todoItemsService.UpdateTodoItemAsync(id, todoItem);
+                return NoContent();
             }
-            catch (DbUpdateConcurrencyException)
+            catch (ArgumentException ex)
             {
-                if (!TodoItemIdExists(id))
-                {
-                    return NotFound();
-                }
-                else
-                {
-                    throw;
-                }
+                _logger.LogError(ex, null);
+                return NotFound();
             }
 
-            return NoContent();
+            
         } 
 
         // POST: api/TodoItems 
         [HttpPost]
         public async Task<IActionResult> PostTodoItem(TodoItem todoItem)
         {
-            if (string.IsNullOrEmpty(todoItem?.Description))
+            try
             {
-                return BadRequest("Description is required");
+                var result = await _todoItemsService.CreateTodoItemAsync(todoItem);
+                return CreatedAtAction(nameof(GetTodoItem), new { id = result.Id }, result);
             }
-            else if (TodoItemDescriptionExists(todoItem.Description))
+            catch (ArgumentException ex)
             {
-                return BadRequest("Description already exists");
-            } 
-
-            _context.TodoItems.Add(todoItem);
-            await _context.SaveChangesAsync();
-             
-            return CreatedAtAction(nameof(GetTodoItem), new { id = todoItem.Id }, todoItem);
-        } 
-
-        private bool TodoItemIdExists(Guid id)
-        {
-            return _context.TodoItems.Any(x => x.Id == id);
-        }
-
-        private bool TodoItemDescriptionExists(string description)
-        {
-            return _context.TodoItems
-                   .Any(x => x.Description.ToLowerInvariant() == description.ToLowerInvariant() && !x.IsCompleted);
-        }
+                _logger.LogError(ex, null);
+                return BadRequest(ex.Message);
+            }
+        }    
     }
 }
